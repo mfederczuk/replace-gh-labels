@@ -1,0 +1,2 @@
+This script uses the GitHub REST API to remove every issue label from a given
+repository and then creates new one from a file.
