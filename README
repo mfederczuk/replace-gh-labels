@@ -1,2 +1,18 @@
 This script uses the GitHub REST API to remove every issue label from a given
 repository and then creates new one from a file.
+
+The first argument of the script must be the name of the repository.
+
+Required files in this directory:
+
+* `user`
+  Plaintext file that contains the name of the GitHub user
+
+* `access_token`
+  GitHub Personal access token for the user.
+  The token requires the `repo/public_repo` scope
+
+* `github_issue_labels.json`
+  A JSON file that contains an array of GitHub labels.
+  These labels will replace the old issue labels of the repository.
+  The schema of these labels must be: { "name": string, "description": string, "color": string }
