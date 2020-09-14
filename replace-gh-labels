@@ -104,8 +104,12 @@ readonly new_labels_json
 readonly new_labels_count="$(jq 'length' <<< "$new_labels_json")"
 
 # ============================================================================ #
+
+echo "Repository: $user/$repo_name (https://github.com/$user/$repo_name)"
+
 # === fetching old labels ==================================================== #
 
+echo
 echo 'Fetching old labels...'
 
 declare old_labels_json
