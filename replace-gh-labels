@@ -49,6 +49,14 @@ if [[ ! "$user" =~ $user_pattern ]]; then
 fi
 
 # ============================================================================ #
+# === check github connection ================================================ #
+
+if ! ping 'github.com' -c 1 -w 7 > '/dev/null'; then
+	echo "$0: no network connection to github.com"
+	exit 29
+fi
+
+# ============================================================================ #
 # === access token =========================================================== #
 
 readonly access_token_file_path="$root_dir/access_token"
