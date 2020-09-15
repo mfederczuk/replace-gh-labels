@@ -57,6 +57,35 @@ if ! ping 'github.com' -c 1 -w 7 > '/dev/null'; then
 fi
 
 # ============================================================================ #
+# === check if repository exists ============================================= #
+
+case "$(curl -s \
+		        -w '%{http_code}' \
+		        -o '/dev/null' \
+		        -H 'Accept: application/vnd.github.v3+json' \
+		        "https://api.github.com/repos/$user/$repo_name")" in
+	2*)
+		# repo exists
+		;;
+	404)
+		echo "$0: $user/$repo_name: GitHub repository does not exist"
+		exit 48
+		;;
+	4*)
+		echo "$0: unknown client error"
+		exit 125
+		;;
+	5*)
+		echo "$0: unknown server error"
+		exit 125
+		;;
+	*)
+		echo "$0: unknown error"
+		exit 125
+		;;
+esac
+
+# ============================================================================ #
 # === access token =========================================================== #
 
 readonly access_token_file_path="$root_dir/access_token"
