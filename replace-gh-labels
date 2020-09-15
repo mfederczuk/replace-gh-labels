@@ -3,6 +3,26 @@
 # vim: syntax=sh
 # code: language=shellscript
 
+# === opts =================================================================== #
+
+case "$1" in
+	'--help'|'-h')
+		echo "usage: $0 <repo_name>"
+		exit
+		;;
+	'--version'|'-V')
+		echo "replace-gh-labels v1.0.0-rc01
+Copyright (C) 2020 Michael Federczuk
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+
+Written by Michael Federczuk."
+		exit
+		;;
+esac
+
+# ============================================================================ #
 # === repo name ============================================================== #
 
 readonly repo_name_patern='^[A-Za-z0-9_-]+$'
