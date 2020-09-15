@@ -153,7 +153,7 @@ declare old_labels_json
 old_labels_json="$( \
 	curl -s \
 	-u "$user:$access_token" \
-	-H "Accept: application/vnd.github.v3+json" \
+	-H 'Accept: application/vnd.github.v3+json' \
 	"https://api.github.com/repos/$user/$repo_name/labels" \
 )"
 exc=$?
@@ -201,7 +201,7 @@ for old_label in "${old_labels[@]}"; do
 	curl -s \
 		-X DELETE \
 		-u "$user:$access_token" \
-		-H "Accept: application/vnd.github.v3+json" \
+		-H 'Accept: application/vnd.github.v3+json' \
 		"https://api.github.com/repos/$user/$repo_name/labels/$(_url_encode "$old_label")" > '/dev/null'
 	exc=$?
 
