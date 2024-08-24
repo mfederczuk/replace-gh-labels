@@ -234,6 +234,43 @@ readonly new_labels_json_file_pathname \
 
 #endregion
 
+#region config directory
+
+declare config_dir_pathname
+
+function is_absolute_pathname() {
+	[[ "$1" =~ ^'/' ]]
+}
+
+declare base_config_dir_pathname
+base_config_dir_pathname="${XDG_CONFIG_HOME-}"
+
+if ! is_absolute_pathname "$base_config_dir_pathname"; then
+	declare home_dir_pathname
+	home_dir_pathname="${HOME-}"
+
+	if [ -z "$home_dir_pathname" ]; then
+		printf '%s: HOME: environment variable must not be unset or empty\n' "$argv0" >&2
+		exit 48
+	fi
+
+	if ! is_absolute_pathname "$home_dir_pathname"; then
+		printf '%s: HOME: %s: pathname stored in environment variable must be absolute\n' "$argv0" "$home_dir_pathname" >&2
+		exit 49
+	fi
+
+	base_config_dir_pathname="$home_dir_pathname/.config"
+fi
+
+config_dir_pathname="$base_config_dir_pathname/replace-gh-labels"
+
+unset -v base_config_dir_pathname
+unset -f is_absolute_pathname
+
+readonly config_dir_pathname
+
+#endregion
+
 declare username
 username="$repo_owner"
 readonly username
@@ -267,13 +304,8 @@ readonly new_labels_json
 
 #region reading the access token
 
-declare root_dir_pathname
-root_dir_pathname="$(dirname -- "$0" && printf x)"
-root_dir_pathname="${root_dir_pathname%$'\nx'}"
-readonly root_dir_pathname
-
 declare access_token_file_pathname
-access_token_file_pathname="$root_dir_pathname/access_token"
+access_token_file_pathname="$config_dir_pathname/access_token.txt"
 readonly access_token_file_pathname
 
 if [ ! -e "$access_token_file_pathname" ]; then
@@ -332,7 +364,7 @@ case "$response_code" in
 		;;
 	(404)
 		printf '%s: %s/%s: GitHub repository does not exist\n' "$argv0" "$repo_owner" "$repo_name" >&2
-		exit 48
+		exit 50
 		;;
 	(*)
 		printf '%s: unknown error (HTTP response code %s)\n' "$argv0" "$response_code" >&2
