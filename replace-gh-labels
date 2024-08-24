@@ -111,7 +111,7 @@ GitHub repository: <https://github.com/mfederczuk/replace-gh-labels>\\n"
 }
 
 function print_version_info() {
-	printf 'replace-gh-labels v1.0.0-rc01
+	printf 'replace-gh-labels v2.0.0-indev01
 Copyright (C) 2024 Michael Federczuk
 
 License MPL-2.0: Mozilla Public License 2.0 <https://www.mozilla.org/en-US/MPL/2.0/>

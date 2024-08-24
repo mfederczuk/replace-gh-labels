@@ -5,9 +5,9 @@
 
 # `replace-gh-labels` #
 
-[version_shield]: https://img.shields.io/badge/version-1.0.0--rc01-informational.svg
-[release_page]: https://github.com/mfederczuk/replace-gh-labels/releases/tag/v1.0.0-rc01 "Release v1.0.0-rc01"
-[![version: 1.0.0-rc01][version_shield]][release_page]
+[version_shield]: https://img.shields.io/badge/version-2.0.0--indev01-informational.svg
+[release_page]: https://github.com/mfederczuk/replace-gh-labels/releases/tag/v2.0.0-indev01 "Release v2.0.0-indev01"
+[![version: 2.0.0-indev01][version_shield]][release_page]
 [![Changelog](https://img.shields.io/badge/-Changelog-informational.svg)](CHANGELOG.md "Changelog")
 
 ## About ##
@@ -46,7 +46,7 @@ Just download the script from this repository, add the executable bit.
 Optionally add it to the `$PATH`.
 
 ```sh
-wget https://github.com/mfederczuk/replace-gh-labels/raw/v1.0.0-rc01/replace-gh-labels &&
+wget https://github.com/mfederczuk/replace-gh-labels/raw/v2.0.0-indev01/replace-gh-labels &&
 	chmod +x replace-gh-labels
 ```
 
