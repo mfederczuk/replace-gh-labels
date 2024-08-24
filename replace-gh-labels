@@ -281,9 +281,37 @@ readonly config_dir_pathname
 
 #endregion
 
+#region reading username
+
+declare username_file_pathname
+username_file_pathname="$config_dir_pathname/user.txt"
+readonly username_file_pathname
+
 declare username
-username="$repo_owner"
+
+if [ ! -e "$username_file_pathname" ]; then
+	username="$repo_owner"
+else
+	if [ ! -f "$username_file_pathname" ]; then
+		printf '%s: %s: not a file\n' "$argv0" "$username_file_pathname" >&2
+		exit 26
+	fi
+
+	if [ ! -r "$username_file_pathname" ]; then
+		printf '%s: %s: permission denied: read permission missing\n' "$argv0" "$username_file_pathname" >&2
+		exit 77
+	fi
+
+	username="$(< "$username_file_pathname")"
+
+	if [ -z "$username" ]; then
+		printf '%s: %s: username is empty\n' "$argv0" "$username_file_pathname" >&2
+		exit 80
+	fi
+fi
 readonly username
+
+#endregion
 
 #region reading the new labels
 
@@ -386,7 +414,13 @@ unset -v response_code
 
 #endregion
 
-printf 'Using repository %s/%s (https://github.com/%s/%s)\n\n' "$repo_owner" "$repo_name" "$repo_owner" "$repo_name" >&2
+printf 'Using repository %s/%s (https://github.com/%s/%s)\n' "$repo_owner" "$repo_name" "$repo_owner" "$repo_name" >&2
+
+if [ "$repo_owner" != "$username" ]; then
+	printf 'Authenticating as @%s\n' "$username" >&2
+fi
+
+printf '\n' >&2
 
 #region fetching old labels
 
