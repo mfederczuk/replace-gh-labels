@@ -70,7 +70,10 @@ function jq() {
 #region processing the arguments
 
 declare repo_owner repo_name \
-        new_labels_json_file_pathname
+        new_labels_json_file_pathname \
+        is_dry_run
+
+is_dry_run=false
 
 declare -a operands
 operands=()
@@ -121,6 +124,9 @@ for arg in "$@"; do
 					print_version_info
 					exit
 					;;
+				('dry-run')
+					is_dry_run=true
+					;;
 				(*)
 					if [ -z "$first_invalid_option_argument" ]; then
 						first_invalid_option_argument="--$opt_id"
@@ -146,6 +152,9 @@ for arg in "$@"; do
 				('V')
 					print_version_info
 					exit
+					;;
+				('n')
+					is_dry_run=true
 					;;
 				(*)
 					if [ -z "$first_invalid_option_argument" ]; then
@@ -230,7 +239,8 @@ unset -f print_usage
 unset -v operands
 
 readonly new_labels_json_file_pathname \
-         repo_name repo_owner
+         repo_name repo_owner \
+         is_dry_run
 
 #endregion
 
@@ -450,6 +460,10 @@ declare old_label
 for old_label in "${old_labels[@]}"; do
 	printf "Deleting old label '%s'...\\n" "$old_label" >&2
 
+	if $is_dry_run; then
+		continue
+	fi
+
 	declare old_label_percent_encoded
 	old_label_percent_encoded="$(percent_encode "$old_label")"
 
@@ -482,6 +496,10 @@ for ((i = 0; i < new_labels_count; ++i)); do
 	new_label_name="$(jq -rM '.name' <<< "$new_label_json")"
 
 	printf "Creating new label '%s'...\\n" "$new_label_name" >&2
+
+	if $is_dry_run; then
+		continue
+	fi
 
 	curl --silent --show-error \
 	     --location \
