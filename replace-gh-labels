@@ -3,256 +3,580 @@
 # vim: syntax=sh
 # code: language=shellscript
 
-# === opts =================================================================== #
+# Copyright (c) 2024 Michael Federczuk
+# SPDX-License-Identifier: MPL-2.0 AND Apache-2.0
 
-case "$1" in
-	'--help'|'-h')
-		echo "usage: $0 <repo_name>"
-		exit
+#region preamble
+
+case "$-" in
+	(*'i'*)
+		if \command test -n "${BASH_VERSION-}"; then
+			# using `eval` here in case a non-Bash shell tries to parse this branch even if the condition is false
+			\command eval "\\command printf '%s: ' \"\${BASH_SOURCE[0]}\" >&2"
+		fi
+
+		\command printf 'script was called interactively\n' >&2
+		return 124
 		;;
-	'--version'|'-V')
-		echo "replace-gh-labels v1.0.0-rc01
-Copyright (C) 2020 Michael Federczuk
-License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>
+esac
+
+set -o errexit
+set -o nounset
+
+# enabling POSIX-compliant behavior for GNU programs
+export POSIXLY_CORRECT=yes POSIX_ME_HARDER=yes
+
+if [ -z "${BASH_VERSION-}" ]; then
+	if [ "${0#/}" = "$0" ]; then
+		argv0="$0"
+	else
+		argv0="$(basename -- "$0" && printf x)"
+		argv0="${argv0%"$(printf '\nx')"}"
+	fi
+	readonly argv0
+
+	printf '%s: GNU Bash is required for this script\n' "$argv0" >&2
+	exit 1
+fi
+
+declare argv0
+if [[ ! "$0" =~ ^'/' ]]; then
+	argv0="$0"
+else
+	argv0="$(basename -- "$0" && printf x)"
+	argv0="${argv0%$'\nx'}"
+fi
+readonly argv0
+
+#endregion
+
+function curl() {
+	if ! command -v curl > '/dev/null'; then
+		printf '%s: curl: program missing\n' "$argv0" >&2
+		return 27
+	fi
+
+	command curl "$@"
+}
+
+function jq() {
+	if ! command -v jq > '/dev/null'; then
+		printf '%s: jq: program missing\n' "$argv0" >&2
+		return 27
+	fi
+
+	command jq "$@"
+}
+
+#region processing the arguments
+
+declare repo_owner repo_name \
+        new_labels_json_file_pathname \
+        is_dry_run
+
+is_dry_run=false
+
+declare -a operands
+operands=()
+
+function print_usage() {
+	printf 'usage: %s <repo_owner>/<repo_name> <issue_labels_json_file>\n' "$argv0"
+}
+
+function print_help() {
+	print_usage
+	printf "    Replaces all issue labels of a GitHub repository with new ones supplied from
+    the JSON file <issue_labels_json_file>.
+
+    The JSON schema of the file is:
+      [
+        {
+          \"name\": string,
+          \"description\": string | null,
+          \"color\": string | null
+        }
+      ]
+
+    The username and personal access token used for authentication are read
+    from the files 'user.txt' and 'access_token.txt' respectively, which are
+    located in the directory '\$XDG_CONFIG_HOME/replace-gh-labels'
+    If the file 'user.txt' does not exist, then <repo_owner> is used instead.
+
+    Options:
+      -n / --dry-run  Don't actually delete or create labels.
+      -h / --help     Print this summary and exit.
+      -V / --version  Print version and legal information and exit.
+
+GitHub repository: <https://github.com/mfederczuk/replace-gh-labels>\\n"
+}
+
+function print_version_info() {
+	printf 'replace-gh-labels v1.0.0-rc01
+Copyright (C) 2024 Michael Federczuk
+
+License MPL-2.0: Mozilla Public License 2.0 <https://www.mozilla.org/en-US/MPL/2.0/>
+          AND
+        Apache-2.0: Apache License 2.0 <https://www.apache.org/licenses/LICENSE-2.0>
+
 This is free software: you are free to change and redistribute it.
 There is NO WARRANTY, to the extent permitted by law.
 
-Written by Michael Federczuk."
-		exit
+Written by Michael Federczuk.\n'
+}
+
+declare first_invalid_option_argument
+first_invalid_option_argument=''
+
+declare is_processing_options
+is_processing_options=true
+
+declare arg
+for arg in "$@"; do
+	if $is_processing_options && [[ "$arg" =~ ^'-'. ]]; then
+		if [ "$arg" = '--' ]; then
+			is_processing_options=false
+			continue
+		fi
+
+		if [[ "$arg" =~ ^'--'([^'=']*)('='.*)?$ ]]; then
+			declare opt_id
+			opt_id="${BASH_REMATCH[1]}"
+
+			case "$opt_id" in
+				('help')
+					print_help
+					exit
+					;;
+				('version')
+					print_version_info
+					exit
+					;;
+				('dry-run')
+					is_dry_run=true
+					;;
+				(*)
+					if [ -z "$first_invalid_option_argument" ]; then
+						first_invalid_option_argument="--$opt_id"
+					fi
+					;;
+			esac
+
+			unset -v opt_id
+
+			continue
+		fi
+
+		declare -i i
+		for ((i = 1; i < ${#arg}; ++i)); do
+			declare opt_id
+			opt_id="${arg:i:1}"
+
+			case "$opt_id" in
+				('h')
+					print_help
+					exit
+					;;
+				('V')
+					print_version_info
+					exit
+					;;
+				('n')
+					is_dry_run=true
+					;;
+				(*)
+					if [ -z "$first_invalid_option_argument" ]; then
+						first_invalid_option_argument="-$opt_id"
+					fi
+					;;
+			esac
+
+			unset -v opt_id
+		done
+		unset -v i
+
+		continue
+	fi
+
+	operands+=("$arg")
+done
+unset -v arg
+
+unset -v is_processing_options
+
+if [ -n "$first_invalid_option_argument" ]; then
+	printf '%s: %s: invalid option\n' "$argv0" "$first_invalid_option_argument" >&2
+	exit 5
+fi
+unset -v first_invalid_option_argument
+
+unset -f print_version_info print_help
+
+case ${#operands[@]} in
+	(0)
+		printf '%s: missing arguments: <repo_owner>/<repo_name> <issue_labels_json_file>\n' "$argv0" >&2
+		print_usage >&2
+		exit 4
+		;;
+	(1)
+		printf '%s: missing argument: <issue_labels_json_file>\n' "$argv0" >&2
+		print_usage >&2
+		exit 4
+		;;
+	(2)
+		if [ -z "${operands[0]}" ]; then
+			printf '%s: argument 1: must not be empty\n' "$argv0" >&2
+			print_usage >&2
+			exit 9
+		fi
+
+		readonly repo_owner_pattern='[A-Za-z0-9_-]+'
+		readonly repo_name_pattern='[A-Za-z0-9_-]+'
+		readonly repo_owner_and_name_pattern="^($repo_owner_pattern)/($repo_name_pattern)$"
+
+		if [[ ! "${operands[0]}" =~ $repo_owner_and_name_pattern ]]; then
+			printf '%s: %s: does not match: /%s/\n' "$argv0" "$1" "${repo_owner_and_name_pattern//\//\\\/}" >&2
+
+			if [[ ! "${operands[0]}" =~ '/' ]]; then
+				print_usage >&2
+			fi
+
+			exit 12
+		fi
+
+		repo_owner="${BASH_REMATCH[1]}"
+		repo_name="${BASH_REMATCH[2]}"
+
+
+		if [ -z "${operands[1]}" ]; then
+			printf '%s: argument 2: must not be empty\n' "$argv0" >&2
+			print_usage >&2
+			exit 9
+		fi
+
+		new_labels_json_file_pathname="${operands[1]}"
+		;;
+	(*)
+		printf '%s: too many arguments: %d\n' "$argv0" $(($# - 2)) >&2
+		print_usage >&2
+		exit 4
 		;;
 esac
 
-# ============================================================================ #
-# === repo name ============================================================== #
+unset -f print_usage
+unset -v operands
 
-readonly repo_name_patern='^[A-Za-z0-9_-]+$'
+readonly new_labels_json_file_pathname \
+         repo_name repo_owner \
+         is_dry_run
 
-if (($# == 0)); then
-	echo "$0: missing argument: <repo_name>" >&2
-	exit 4
-elif [ -z "$1" ]; then
-	echo "$0: argument may not be empty" >&2
-	exit 9
-elif [[ ! "$1" =~ $repo_name_patern ]]; then
-	echo "$0: $1: does not match: /${repo_name_patern//\//\\\/}/" >&2
-	exit 12
-fi
+#endregion
 
-readonly repo_name="$1"
+#region config directory
 
-# ============================================================================ #
+declare config_dir_pathname
 
-readonly root_dir="$(realpath "$(dirname "$0")")"
+function is_absolute_pathname() {
+	[[ "$1" =~ ^'/' ]]
+}
 
-# === user =================================================================== #
+declare base_config_dir_pathname
+base_config_dir_pathname="${XDG_CONFIG_HOME-}"
 
-readonly user_file_path="$root_dir/user"
-readonly user_file_rel_path="$(realpath --relative-to=. "$user_file_path")"
+if ! is_absolute_pathname "$base_config_dir_pathname"; then
+	declare home_dir_pathname
+	home_dir_pathname="${HOME-}"
 
-if [ ! -e "$user_file_path" ]; then
-	echo "$0: $user_file_rel_path: no such file" >&2
-	exit 24
-elif [ ! -f "$user_file_path" ]; then
-	echo "$0: $user_file_rel_path: not a file" >&2
-	exit 26
-elif [ ! -r "$user_file_path" ]; then
-	echo "$0: $user_file_rel_path: permission denied" >&2
-	exit 77
-fi
-
-readonly user="$(< "$user_file_path")"
-
-readonly user_pattern='^[A-Za-z0-9_-]+$'
-if [[ ! "$user" =~ $user_pattern ]]; then
-	echo "$0: $user_file_rel_path: $user: does not match: /${user_pattern//\//\\\/}/"
-	exit 79
-fi
-
-# ============================================================================ #
-# === check github connection ================================================ #
-
-if ! ping 'github.com' -c 1 -w 7 > '/dev/null'; then
-	echo "$0: no network connection to github.com"
-	exit 29
-fi
-
-# ============================================================================ #
-# === check if repository exists ============================================= #
-
-case "$(curl -s \
-		        -w '%{http_code}' \
-		        -o '/dev/null' \
-		        -H 'Accept: application/vnd.github.v3+json' \
-		        "https://api.github.com/repos/$user/$repo_name")" in
-	2*)
-		# repo exists
-		;;
-	404)
-		echo "$0: $user/$repo_name: GitHub repository does not exist"
+	if [ -z "$home_dir_pathname" ]; then
+		printf '%s: HOME: environment variable must not be unset or empty\n' "$argv0" >&2
 		exit 48
-		;;
-	4*)
-		echo "$0: unknown client error"
-		exit 125
-		;;
-	5*)
-		echo "$0: unknown server error"
-		exit 125
-		;;
-	*)
-		echo "$0: unknown error"
-		exit 125
-		;;
-esac
+	fi
 
-# ============================================================================ #
-# === access token =========================================================== #
+	if ! is_absolute_pathname "$home_dir_pathname"; then
+		printf '%s: HOME: %s: pathname stored in environment variable must be absolute\n' "$argv0" "$home_dir_pathname" >&2
+		exit 49
+	fi
 
-readonly access_token_file_path="$root_dir/access_token"
-readonly access_token_file_rel_path="$(realpath --relative-to=. "$access_token_file_path")"
-
-if [ ! -e "$access_token_file_path" ]; then
-	echo "$0: $access_token_file_rel_path: no such file" >&2
-	exit 24
-elif [ ! -f "$access_token_file_path" ]; then
-	echo "$0: $access_token_file_rel_path: not a file" >&2
-	exit 26
-elif [ ! -r "$access_token_file_path" ]; then
-	echo "$0: $access_token_file_rel_path: permission denied" >&2
-	exit 77
+	base_config_dir_pathname="$home_dir_pathname/.config"
 fi
 
-readonly access_token="$(< "$access_token_file_path")"
+config_dir_pathname="$base_config_dir_pathname/replace-gh-labels"
 
-if [ -z "$access_token" ]; then
-	echo "$0: $access_token_file_rel_path: access token is empty" >&2
-	exit 80
+unset -v base_config_dir_pathname
+unset -f is_absolute_pathname
+
+readonly config_dir_pathname
+
+#endregion
+
+#region reading username
+
+declare username_file_pathname
+username_file_pathname="$config_dir_pathname/user.txt"
+readonly username_file_pathname
+
+declare username
+
+if [ ! -e "$username_file_pathname" ]; then
+	username="$repo_owner"
+else
+	if [ ! -f "$username_file_pathname" ]; then
+		printf '%s: %s: not a file\n' "$argv0" "$username_file_pathname" >&2
+		exit 26
+	fi
+
+	if [ ! -r "$username_file_pathname" ]; then
+		printf '%s: %s: permission denied: read permission missing\n' "$argv0" "$username_file_pathname" >&2
+		exit 77
+	fi
+
+	username="$(< "$username_file_pathname")"
+
+	if [ -z "$username" ]; then
+		printf '%s: %s: username is empty\n' "$argv0" "$username_file_pathname" >&2
+		exit 80
+	fi
+fi
+readonly username
+
+#endregion
+
+#region reading the new labels
+
+if [ ! -e "$new_labels_json_file_pathname" ]; then
+	printf '%s: %s: no such file\n' "$argv0" "$new_labels_json_file_pathname" >&2
+	exit 24
 fi
 
-# ============================================================================ #
-
-declare exc
-
-# === new labels ============================================================= #
-
-readonly new_labels_json_file="$root_dir/github_issue_labels.json"
-readonly new_labels_json_file_rel_path="$(realpath --relative-to=. "$new_labels_json_file")"
-
-if [ ! -e "$new_labels_json_file" ]; then
-	echo "$0: $new_labels_json_file_rel_path: no such file" >&2
-	exit 24
-elif [ ! -f "$new_labels_json_file" ]; then
-	echo "$0: $new_labels_json_file_rel_path: not a file" >&2
+if [ ! -f "$new_labels_json_file_pathname" ]; then
+	printf '%s: %s: not a file\n' "$argv0" "$new_labels_json_file_pathname" >&2
 	exit 26
-elif [ ! -r "$new_labels_json_file" ]; then
-	echo "$0: $new_labels_json_file_rel_path: permission denied" >&2
+fi
+
+if [ ! -r "$new_labels_json_file_pathname" ]; then
+	printf '%s: %s: permission denied: read permission missing\n' "$argv0" "$new_labels_json_file_pathname" >&2
 	exit 77
 fi
 
 declare new_labels_json
-new_labels_json="$(jq -c 'map({name, description: (if .description == null then "" else .description end), color: (if .color == null then "000000" else .color end)})' "$new_labels_json_file" | sed s/'null'/'""'/g)"
-exc=$?
-
-if ((exc != 0)); then
-	exit $exc
-fi
+new_labels_json="$(jq -c 'map({
+	name,
+	description: (if .description == null then "" else .description end),
+	color: (if .color == null then "000000" else .color end)
+})' "$new_labels_json_file_pathname")"
 readonly new_labels_json
 
-readonly new_labels_count="$(jq 'length' <<< "$new_labels_json")"
+#endregion
 
-# ============================================================================ #
+#region reading the access token
 
-echo "Repository: $user/$repo_name (https://github.com/$user/$repo_name)"
+declare access_token_file_pathname
+access_token_file_pathname="$config_dir_pathname/access_token.txt"
+readonly access_token_file_pathname
 
-# === fetching old labels ==================================================== #
+if [ ! -e "$access_token_file_pathname" ]; then
+	printf '%s: %s: no such file\n' "$argv0" "$access_token_file_pathname" >&2
+	exit 24
+fi
 
-echo
-echo 'Fetching old labels...'
+if [ ! -f "$access_token_file_pathname" ]; then
+	printf '%s: %s: not a file\n' "$argv0" "$access_token_file_pathname" >&2
+	exit 26
+fi
+
+if [ ! -r "$access_token_file_pathname" ]; then
+	printf '%s: %s: permission denied: read permission missing\n' "$argv0" "$access_token_file_pathname" >&2
+	exit 77
+fi
+
+declare access_token
+access_token="$(< "$access_token_file_pathname")"
+readonly access_token
+
+if [ -z "$access_token" ]; then
+	printf '%s: %s: access token is empty\n' "$argv0" "$access_token_file_pathname" >&2
+	exit 80
+fi
+
+#endregion
+
+#region checking connection to github.com
+
+if command -v ping > '/dev/null'; then
+	if ! ping -c 2 -w 10 'github.com' > '/dev/null'; then
+		printf '%s: no network connection to github.com\n' "$argv0" >&2
+		exit 29
+	fi
+else
+	printf "Command 'ping' not found; cannot test connection to 'github.com'.\\n" >&2
+fi
+
+#endregion
+
+#region checking if repository exists
+
+declare response_code
+response_code="$(curl --silent --show-error \
+                      --location \
+                      --write-out '%{http_code}' \
+                      --output '/dev/null' \
+                      --user "$username:$access_token" \
+                      --header 'Accept: application/vnd.github.v3+json' \
+                      "https://api.github.com/repos/$repo_owner/$repo_name")"
+
+case "$response_code" in
+	(2*)
+		# repo exists
+		;;
+	(404)
+		printf '%s: %s/%s: GitHub repository does not exist\n' "$argv0" "$repo_owner" "$repo_name" >&2
+		exit 50
+		;;
+	(*)
+		printf '%s: unknown error (HTTP response code %s)\n' "$argv0" "$response_code" >&2
+		exit 125
+		;;
+esac
+
+unset -v response_code
+
+#endregion
+
+printf 'Using repository %s/%s (https://github.com/%s/%s)\n' "$repo_owner" "$repo_name" "$repo_owner" "$repo_name" >&2
+
+if [ "$repo_owner" != "$username" ]; then
+	printf 'Authenticating as @%s\n' "$username" >&2
+fi
+
+printf '\n' >&2
+
+#region fetching old labels
+
+printf 'Fetching old labels...\n' >&2
+
+declare -a old_labels
+old_labels=()
 
 declare old_labels_json
-old_labels_json="$( \
-	curl -s \
-	-u "$user:$access_token" \
-	-H 'Accept: application/vnd.github.v3+json' \
-	"https://api.github.com/repos/$user/$repo_name/labels" \
-)"
-exc=$?
+old_labels_json="$(curl --silent --show-error \
+                        --location \
+                        --user "$username:$access_token" \
+                        --header 'Accept: application/vnd.github.v3+json' \
+                        "https://api.github.com/repos/$repo_owner/$repo_name/labels")"
 
-if ((exc != 0)); then
-	echo $exc
-fi
-readonly old_labels_json
+declare -i old_labels_count
+old_labels_count="$(jq 'length' <<< "$old_labels_json")"
 
-readonly old_labels_count="$(jq 'length' <<< "$old_labels_json")"
+declare -i i
 
-declare old_labels=()
 for ((i = 0; i < old_labels_count; ++i)); do
-	old_labels+=("$(jq -r ".[$i].name" <<< "$old_labels_json")")
-done; unset -v i
+	old_labels+=(
+		"$(jq --raw-output ".[$i].name" <<< "$old_labels_json")"
+	)
+done
+
+unset -v i \
+         old_labels_count \
+         old_labels_json
+
 readonly old_labels
 
-# ============================================================================ #
+#endregion
 
-_url_encode() {
-	local -r str="$1"
-	local out=''
+printf '\n' >&2
 
-	local i c cp; for ((i = 0; i < ${#str}; ++i)); do
-		c="${str:i:1}"
-		cp="$(printf '%s' "$c" | hexdump -e '/1 "%02d"')"
+#region deleting old labels
 
-		if [[ "$c" =~ ^[]:?\#@\!\$\&\'\"\(\)*+,\;=\ []$ ]] || ((cp > 127)); then
-			out+="$(printf '%%%02X' "$cp")"
+function percent_encode() {
+	local unencoded_string
+	unencoded_string="$1"
+	readonly unencoded_string
+
+	local bytes
+	bytes="$(printf '%s' "$unencoded_string" | od -v -An -tu1)"
+	readonly bytes
+
+	local encoded_string
+	encoded_string=''
+
+	local -i byte
+	for byte in $bytes; do
+		# <https://datatracker.ietf.org/doc/html/rfc3986#section-2.3>
+		if ((byte >= 65 && byte <= 90)) || # A-Z
+		   ((byte >= 97 && byte <= 122)) || # a-z
+		   ((byte >= 48 && byte <= 57)) || # 0-9
+		   ((byte == 45)) || ((byte == 46)) || # hypen & period
+		   ((byte == 95)) || ((byte == 126)); then # underscore & tilde
+
+			# shellcheck disable=2059
+			encoded_string+="$(printf "\\$(printf '%o' $byte)")"
 		else
-			out+="$c"
+			encoded_string+="%$(printf '%02x' $byte)"
 		fi
-	done; unset -v c i
+	done
 
-	printf '%s' "$out"
+	printf '%s' "$encoded_string"
 }
 
-# === deleting old labels ==================================================== #
-
-echo
-
+declare old_label
 for old_label in "${old_labels[@]}"; do
-	echo "Deleting old label '$old_label'..."
+	printf "Deleting old label '%s'...\\n" "$old_label" >&2
 
-	curl -s \
-		-X DELETE \
-		-u "$user:$access_token" \
-		-H 'Accept: application/vnd.github.v3+json' \
-		"https://api.github.com/repos/$user/$repo_name/labels/$(_url_encode "$old_label")" > '/dev/null'
-	exc=$?
-
-	if ((exc != 0)); then
-		exit $exc
+	if $is_dry_run; then
+		continue
 	fi
-done; unset -v old_label
 
-# ============================================================================ #
-# === creating new labels ==================================================== #
+	declare old_label_percent_encoded
+	old_label_percent_encoded="$(percent_encode "$old_label")"
 
-echo
+	curl --silent --show-error \
+	     --location \
+	     --output '/dev/null' \
+	     --request DELETE \
+	     --user "$username:$access_token" \
+	     --header 'Accept: application/vnd.github.v3+json' \
+	     "https://api.github.com/repos/$repo_owner/$repo_name/labels/$old_label_percent_encoded"
 
-declare new_label_json; for ((i = 0; i < new_labels_count; ++i)); do
+	unset -v old_label_percent_encoded
+done
+unset -v old_label
+
+#endregion
+
+printf '\n' >&2
+
+#region creating new labels
+
+declare -i new_labels_count
+new_labels_count="$(jq 'length' <<< "$new_labels_json")"
+
+for ((i = 0; i < new_labels_count; ++i)); do
+	declare new_label_json
 	new_label_json="$(jq -cM ".[$i]" <<< "$new_labels_json")"
-	echo "Creating new label '$(jq -rM '.name' <<< "$new_label_json")'..."
 
-	curl -s \
-		-X POST \
-		-u "$user:$access_token" \
-		-H "Accept: application/vnd.github.v3+json" \
-		"https://api.github.com/repos/$user/$repo_name/labels" \
-		-d "$new_label_json" > '/dev/null'
-	exc=$?
+	declare new_label_name
+	new_label_name="$(jq -rM '.name' <<< "$new_label_json")"
 
-	if ((exc != 0)); then
-		exit $exc
+	printf "Creating new label '%s'...\\n" "$new_label_name" >&2
+
+	if $is_dry_run; then
+		continue
 	fi
-done; unset -v new_label_json
 
-# ============================================================================ #
+	curl --silent --show-error \
+	     --location \
+	     --output '/dev/null' \
+	     --request POST \
+	     --user "$username:$access_token" \
+	     --header "Accept: application/vnd.github.v3+json" \
+	     --data-raw "$new_label_json" \
+	     "https://api.github.com/repos/$repo_owner/$repo_name/labels"
 
-echo
-echo "We're done. Everything should be fine!"
+	unset -v new_label_name \
+	         new_label_json
+done
+
+unset -v new_labels_count
+
+#endregion
+
+printf '\nDone.\n' >&2
