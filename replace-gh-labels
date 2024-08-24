@@ -69,13 +69,14 @@ function jq() {
 
 #region processing the arguments
 
-declare repo_name
+declare repo_owner repo_name \
+        new_labels_json_file_pathname
 
 declare -a operands
 operands=()
 
 function print_usage() {
-	printf 'usage: %s <repo_name>\n' "$argv0"
+	printf 'usage: %s <repo_owner>/<repo_name> <issue_labels_json_file>\n' "$argv0"
 }
 
 function print_help() {
@@ -176,27 +177,50 @@ unset -f print_version_info print_help
 
 case ${#operands[@]} in
 	(0)
-		printf '%s: missing argument: <repo_name>\n' "$argv0" >&2
+		printf '%s: missing arguments: <repo_owner>/<repo_name> <issue_labels_json_file>\n' "$argv0" >&2
 		print_usage >&2
 		exit 4
 		;;
 	(1)
+		printf '%s: missing argument: <issue_labels_json_file>\n' "$argv0" >&2
+		print_usage >&2
+		exit 4
+		;;
+	(2)
 		if [ -z "${operands[0]}" ]; then
-			printf '%s: argument must not be empty\n' "$argv0" >&2
+			printf '%s: argument 1: must not be empty\n' "$argv0" >&2
 			print_usage >&2
 			exit 9
 		fi
 
-		readonly repo_name_pattern='^[A-Za-z0-9_-]+$'
-		if [[ ! "${operands[0]}" =~ $repo_name_pattern ]]; then
-			printf '%s: %s: does not match: /%s/\n' "$argv0" "$1" "${repo_name_pattern//\//\\\/}" >&2
+		readonly repo_owner_pattern='[A-Za-z0-9_-]+'
+		readonly repo_name_pattern='[A-Za-z0-9_-]+'
+		readonly repo_owner_and_name_pattern="^($repo_owner_pattern)/($repo_name_pattern)$"
+
+		if [[ ! "${operands[0]}" =~ $repo_owner_and_name_pattern ]]; then
+			printf '%s: %s: does not match: /%s/\n' "$argv0" "$1" "${repo_owner_and_name_pattern//\//\\\/}" >&2
+
+			if [[ ! "${operands[0]}" =~ '/' ]]; then
+				print_usage >&2
+			fi
+
 			exit 12
 		fi
 
-		repo_name="${operands[0]}"
+		repo_owner="${BASH_REMATCH[1]}"
+		repo_name="${BASH_REMATCH[2]}"
+
+
+		if [ -z "${operands[1]}" ]; then
+			printf '%s: argument 2: must not be empty\n' "$argv0" >&2
+			print_usage >&2
+			exit 9
+		fi
+
+		new_labels_json_file_pathname="${operands[1]}"
 		;;
 	(*)
-		printf '%s: too many arguments: %d\n' "$argv0" $(($# - 1)) >&2
+		printf '%s: too many arguments: %d\n' "$argv0" $(($# - 2)) >&2
 		print_usage >&2
 		exit 4
 		;;
@@ -205,49 +229,48 @@ esac
 unset -f print_usage
 unset -v operands
 
-readonly repo_name
+readonly new_labels_json_file_pathname \
+         repo_name repo_owner
 
 #endregion
+
+declare username
+username="$repo_owner"
+readonly username
+
+#region reading the new labels
+
+if [ ! -e "$new_labels_json_file_pathname" ]; then
+	printf '%s: %s: no such file\n' "$argv0" "$new_labels_json_file_pathname" >&2
+	exit 24
+fi
+
+if [ ! -f "$new_labels_json_file_pathname" ]; then
+	printf '%s: %s: not a file\n' "$argv0" "$new_labels_json_file_pathname" >&2
+	exit 26
+fi
+
+if [ ! -r "$new_labels_json_file_pathname" ]; then
+	printf '%s: %s: permission denied: read permission missing\n' "$argv0" "$new_labels_json_file_pathname" >&2
+	exit 77
+fi
+
+declare new_labels_json
+new_labels_json="$(jq -c 'map({
+	name,
+	description: (if .description == null then "" else .description end),
+	color: (if .color == null then "000000" else .color end)
+})' "$new_labels_json_file_pathname")"
+readonly new_labels_json
+
+#endregion
+
+#region reading the access token
 
 declare root_dir_pathname
 root_dir_pathname="$(dirname -- "$0" && printf x)"
 root_dir_pathname="${root_dir_pathname%$'\nx'}"
 readonly root_dir_pathname
-
-#region reading the username
-
-declare username_file_pathname
-username_file_pathname="$root_dir_pathname/user"
-readonly username_file_pathname
-
-if [ ! -e "$username_file_pathname" ]; then
-	printf '%s: %s: no such file\n' "$argv0" "$username_file_pathname" >&2
-	exit 24
-fi
-
-if [ ! -f "$username_file_pathname" ]; then
-	printf '%s: %s: not a file\n' "$argv0" "$username_file_pathname" >&2
-	exit 26
-fi
-
-if [ ! -r "$username_file_pathname" ]; then
-	printf '%s: %s: permission denied: read permission missing\n' "$argv0" "$username_file_pathname" >&2
-	exit 77
-fi
-
-declare username
-username="$(< "$username_file_pathname")"
-readonly username
-
-readonly username_pattern='^[A-Za-z0-9_-]+$'
-if [[ ! "$username" =~ $username_pattern ]]; then
-	printf '%s: %s: %s: does not match: /%s/\n' "$argv0" "$username_file_pathname" "$username" "${username_pattern//\//\\\/}" >&2
-	exit 79
-fi
-
-#endregion
-
-#region reading the access token
 
 declare access_token_file_pathname
 access_token_file_pathname="$root_dir_pathname/access_token"
@@ -279,37 +302,6 @@ fi
 
 #endregion
 
-#region reading the new labels
-
-declare new_labels_json_file_pathname
-new_labels_json_file_pathname="$root_dir_pathname/github_issue_labels.json"
-readonly new_labels_json_file_pathname
-
-if [ ! -e "$new_labels_json_file_pathname" ]; then
-	printf '%s: %s: no such file\n' "$argv0" "$new_labels_json_file_pathname" >&2
-	exit 24
-fi
-
-if [ ! -f "$new_labels_json_file_pathname" ]; then
-	printf '%s: %s: not a file\n' "$argv0" "$new_labels_json_file_pathname" >&2
-	exit 26
-fi
-
-if [ ! -r "$new_labels_json_file_pathname" ]; then
-	printf '%s: %s: permission denied: read permission missing\n' "$argv0" "$new_labels_json_file_pathname" >&2
-	exit 77
-fi
-
-declare new_labels_json
-new_labels_json="$(jq -c 'map({
-	name,
-	description: (if .description == null then "" else .description end),
-	color: (if .color == null then "000000" else .color end)
-})' "$new_labels_json_file_pathname")"
-readonly new_labels_json
-
-#endregion
-
 #region checking connection to github.com
 
 if command -v ping > '/dev/null'; then
@@ -332,14 +324,14 @@ response_code="$(curl --silent --show-error \
                       --output '/dev/null' \
                       --user "$username:$access_token" \
                       --header 'Accept: application/vnd.github.v3+json' \
-                      "https://api.github.com/repos/$username/$repo_name")"
+                      "https://api.github.com/repos/$repo_owner/$repo_name")"
 
 case "$response_code" in
 	(2*)
 		# repo exists
 		;;
 	(404)
-		printf '%s: %s/%s: GitHub repository does not exist\n' "$argv0" "$username" "$repo_name" >&2
+		printf '%s: %s/%s: GitHub repository does not exist\n' "$argv0" "$repo_owner" "$repo_name" >&2
 		exit 48
 		;;
 	(*)
@@ -352,7 +344,7 @@ unset -v response_code
 
 #endregion
 
-printf 'Using repository %s/%s (https://github.com/%s/%s)\n\n' "$username" "$repo_name" "$username" "$repo_name" >&2
+printf 'Using repository %s/%s (https://github.com/%s/%s)\n\n' "$repo_owner" "$repo_name" "$repo_owner" "$repo_name" >&2
 
 #region fetching old labels
 
@@ -366,7 +358,7 @@ old_labels_json="$(curl --silent --show-error \
                         --location \
                         --user "$username:$access_token" \
                         --header 'Accept: application/vnd.github.v3+json' \
-                        "https://api.github.com/repos/$username/$repo_name/labels")"
+                        "https://api.github.com/repos/$repo_owner/$repo_name/labels")"
 
 declare -i old_labels_count
 old_labels_count="$(jq 'length' <<< "$old_labels_json")"
@@ -435,7 +427,7 @@ for old_label in "${old_labels[@]}"; do
 	     --request DELETE \
 	     --user "$username:$access_token" \
 	     --header 'Accept: application/vnd.github.v3+json' \
-	     "https://api.github.com/repos/$username/$repo_name/labels/$old_label_percent_encoded"
+	     "https://api.github.com/repos/$repo_owner/$repo_name/labels/$old_label_percent_encoded"
 
 	unset -v old_label_percent_encoded
 done
@@ -466,7 +458,7 @@ for ((i = 0; i < new_labels_count; ++i)); do
 	     --user "$username:$access_token" \
 	     --header "Accept: application/vnd.github.v3+json" \
 	     --data-raw "$new_label_json" \
-	     "https://api.github.com/repos/$username/$repo_name/labels"
+	     "https://api.github.com/repos/$repo_owner/$repo_name/labels"
 
 	unset -v new_label_name \
 	         new_label_json
