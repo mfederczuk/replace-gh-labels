@@ -84,7 +84,29 @@ function print_usage() {
 
 function print_help() {
 	print_usage
-	# TODO
+	printf "    Replaces all issue labels of a GitHub repository with new ones supplied from
+    the JSON file <issue_labels_json_file>.
+
+    The JSON schema of the file is:
+      [
+        {
+          \"name\": string,
+          \"description\": string | null,
+          \"color\": string | null
+        }
+      ]
+
+    The username and personal access token used for authentication are read
+    from the files 'user.txt' and 'access_token.txt' respectively, which are
+    located in the directory '\$XDG_CONFIG_HOME/replace-gh-labels'
+    If the file 'user.txt' does not exist, then <repo_owner> is used instead.
+
+    Options:
+      -n / --dry-run  Don't actually delete or create labels.
+      -h / --help     Print this summary and exit.
+      -V / --version  Print version and legal information and exit.
+
+GitHub repository: <https://github.com/mfederczuk/replace-gh-labels>\\n"
 }
 
 function print_version_info() {
