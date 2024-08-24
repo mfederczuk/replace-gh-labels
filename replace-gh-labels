@@ -69,49 +69,141 @@ function jq() {
 
 #region processing the arguments
 
-case "${1-}" in
-	('--help'|'-h')
-		printf 'usage: %s <repo_name>\n' "$argv0"
-		exit
-		;;
-	('--version'|'-V')
-		printf 'replace-gh-labels v1.0.0-rc01
+declare repo_name
+
+declare -a operands
+operands=()
+
+function print_usage() {
+	printf 'usage: %s <repo_name>\n' "$argv0"
+}
+
+function print_help() {
+	print_usage
+	# TODO
+}
+
+function print_version_info() {
+	printf 'replace-gh-labels v1.0.0-rc01
 Copyright (C) 2024 Michael Federczuk
 License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>
 This is free software: you are free to change and redistribute it.
 There is NO WARRANTY, to the extent permitted by law.
 
 Written by Michael Federczuk.\n'
-		exit
-		;;
-esac
+}
 
-declare repo_name
+declare first_invalid_option_argument
+first_invalid_option_argument=''
 
-case $# in
+declare is_processing_options
+is_processing_options=true
+
+declare arg
+for arg in "$@"; do
+	if $is_processing_options && [[ "$arg" =~ ^'-'. ]]; then
+		if [ "$arg" = '--' ]; then
+			is_processing_options=false
+			continue
+		fi
+
+		if [[ "$arg" =~ ^'--'([^'=']*)('='.*)?$ ]]; then
+			declare opt_id
+			opt_id="${BASH_REMATCH[1]}"
+
+			case "$opt_id" in
+				('help')
+					print_help
+					exit
+					;;
+				('version')
+					print_version_info
+					exit
+					;;
+				(*)
+					if [ -z "$first_invalid_option_argument" ]; then
+						first_invalid_option_argument="--$opt_id"
+					fi
+					;;
+			esac
+
+			unset -v opt_id
+
+			continue
+		fi
+
+		declare -i i
+		for ((i = 1; i < ${#arg}; ++i)); do
+			declare opt_id
+			opt_id="${arg:i:1}"
+
+			case "$opt_id" in
+				('h')
+					print_help
+					exit
+					;;
+				('V')
+					print_version_info
+					exit
+					;;
+				(*)
+					if [ -z "$first_invalid_option_argument" ]; then
+						first_invalid_option_argument="-$opt_id"
+					fi
+					;;
+			esac
+
+			unset -v opt_id
+		done
+		unset -v i
+
+		continue
+	fi
+
+	operands+=("$arg")
+done
+unset -v arg
+
+unset -v is_processing_options
+
+if [ -n "$first_invalid_option_argument" ]; then
+	printf '%s: %s: invalid option\n' "$argv0" "$first_invalid_option_argument" >&2
+	exit 5
+fi
+unset -v first_invalid_option_argument
+
+unset -f print_version_info print_help
+
+case ${#operands[@]} in
 	(0)
 		printf '%s: missing argument: <repo_name>\n' "$argv0" >&2
+		print_usage >&2
 		exit 4
 		;;
 	(1)
-		if [ -z "$1" ]; then
+		if [ -z "${operands[0]}" ]; then
 			printf '%s: argument must not be empty\n' "$argv0" >&2
+			print_usage >&2
 			exit 9
 		fi
 
 		readonly repo_name_pattern='^[A-Za-z0-9_-]+$'
-		if [[ ! "$1" =~ $repo_name_pattern ]]; then
+		if [[ ! "${operands[0]}" =~ $repo_name_pattern ]]; then
 			printf '%s: %s: does not match: /%s/\n' "$argv0" "$1" "${repo_name_pattern//\//\\\/}" >&2
 			exit 12
 		fi
 
-		repo_name="$1"
+		repo_name="${operands[0]}"
 		;;
 	(*)
 		printf '%s: too many arguments: %d\n' "$argv0" $(($# - 1)) >&2
+		print_usage >&2
 		exit 4
 		;;
 esac
+
+unset -f print_usage
+unset -v operands
 
 readonly repo_name
 
